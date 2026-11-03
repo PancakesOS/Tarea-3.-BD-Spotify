@@ -1,7 +1,7 @@
 # Credenciales locales: nunca se suben
 .env
 
-# Material de apoyo de la tarea (no forma parte del entregable)
+# Material de apoyo local (no forma parte del repositorio)
 CLAUDE.md
 PROMPT_INICIAL.md
 contexto/

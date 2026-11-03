@@ -13,7 +13,7 @@
 --   * subscriptions, subscribers, profiles y libraries usan IDs nuevos;
 --     profile_id y library_id coinciden con subscriber_id.
 --
--- Datos agregados para cubrir los casos que pide la tarea (supuesto 13,
+-- Datos agregados para cubrir casos límite de la base (supuesto 13,
 -- son datos de prueba):
 --   * Suscripción sin suscriptores: plan «Estudiantes» (subscription_id 4).
 --   * Artista sin canciones ni álbumes: A11 Natanael Cano.

@@ -1,6 +1,6 @@
 # BD de Spotify: implementación en PostgreSQL
 
-Tarea 3 del curso de Bases de Datos Relacionales. Implementa en **PostgreSQL 18**, dentro de **Docker**, la base de datos transaccional de Spotify diseñada en las tareas 1 y 2, la carga con los datos de Laura y comprueba que sus reglas de negocio se cumplen.
+Proyecto del curso de Ingeniería de Datos. Implementa en **PostgreSQL 18**, dentro de **Docker**, la base de datos transaccional de Spotify a partir del modelo conceptual y el diagrama ER diseñados previamente, la carga con los datos de Laura y comprueba que sus reglas de negocio se cumplen.
 
 ## Contexto
 
@@ -13,7 +13,7 @@ Laura administraba la información de Spotify en un sistema anterior y nos entre
 | Tabla C | Álbumes: año, portada, artista y sus pistas |
 | Tabla D | Suscriptores: registro, suscripción, perfil (nombre visible, foto, país) y lo que guardan en su biblioteca |
 
-En la Tarea 2 esos datos se normalizaron hasta 3FN y se integraron con el diagrama conceptual unificado. El resultado son **14 tablas**: 9 entidades (`subscriptions`, `subscribers`, `profiles`, `libraries`, `playlists`, `songs`, `artists`, `albums` y `countries`, que surgió al normalizar) y 5 tablas de unión (`playlist_song`, `song_artist`, `song_album`, `library_song` y `library_album`).
+En una etapa previa de diseño esos datos se normalizaron hasta 3FN y se integraron con el diagrama conceptual unificado. El resultado son **14 tablas**: 9 entidades (`subscriptions`, `subscribers`, `profiles`, `libraries`, `playlists`, `songs`, `artists`, `albums` y `countries`, que surgió al normalizar) y 5 tablas de unión (`playlist_song`, `song_artist`, `song_album`, `library_song` y `library_album`).
 
 La base cubre suscripciones y suscriptores, el perfil y la biblioteca de cada suscriptor, las playlists con sus canciones en orden y el catálogo de canciones, artistas y álbumes. **No** guarda reproducciones, por eso la pregunta «¿cuál es la canción más escuchada?» no se puede responder (ver `tests.sql`).
 
@@ -42,7 +42,7 @@ Transformaciones aplicadas: duración «m:ss» → segundos, anuncios «sí»/«
 10. La foto del perfil es opcional.
 11. Se usan llaves sustitutas (`subscription_id`, `subscriber_id`, `profile_id`, `library_id`) porque el nombre del plan y el email pueden cambiar.
 12. `profiles` y `libraries` no surgieron al normalizar (relación 1:1 con `subscribers`); se conservan por el diagrama conceptual unificado.
-13. Los datos agregados (plan Estudiantes y artista A11) son de prueba, para cubrir los casos que pide la tarea.
+13. Los datos agregados (plan Estudiantes y artista A11) son de prueba, para cubrir casos límite que la base debe soportar.
 
 Los supuestos también están en los comentarios de `db/01_schema.sql` y `db/02_seed.sql`, junto a la tabla o el dato al que afectan.
 
@@ -168,4 +168,4 @@ Ninguna llave foránea usa `ON DELETE CASCADE`: borrar un suscriptor exige borra
 
 ## Cambios respecto al diagrama ER
 
-Ninguno. El esquema implementa exactamente el diagrama ER de la Tarea 2 (`docs/diagrama_er.png`): mismas tablas, columnas, tipos y relaciones.
+Ninguno. El esquema implementa exactamente el diagrama ER diseñado previamente (`docs/diagrama_er.png`): mismas tablas, columnas, tipos y relaciones.

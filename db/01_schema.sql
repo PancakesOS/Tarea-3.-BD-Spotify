@@ -1,7 +1,7 @@
 -- =====================================================================
 -- 01_schema.sql · Esquema de la BD transaccional de Spotify
 -- =====================================================================
--- Implementa el diagrama ER de la Tarea 2 (docs/diagrama_er.png), en 3FN:
+-- Implementa el diagrama ER diseñado previamente (docs/diagrama_er.png), en 3FN:
 --   * 14 tablas: 9 entidades (las 8 de negocio + countries, que surgió al
 --     normalizar) y 5 tablas de unión.
 --   * Las PK son enteras (o códigos) sin IDENTITY: los IDs se insertan
