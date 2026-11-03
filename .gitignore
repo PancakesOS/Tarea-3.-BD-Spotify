@@ -1,0 +1,12 @@
+# Credenciales locales: nunca se suben
+.env
+
+# Material de apoyo de la tarea (no forma parte del entregable)
+CLAUDE.md
+PROMPT_INICIAL.md
+contexto/
+
+# Archivos del sistema / editor
+.DS_Store
+.claude/
+.vscode/

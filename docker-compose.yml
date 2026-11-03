@@ -1,0 +1,16 @@
+services:
+  postgres:                 # Nombre que le damos a este servicio
+    image: postgres:18      # Imagen del contenedor: trae PostgreSQL 18 y psql
+    environment:            # Usuario, contraseña y nombre de la base de datos a crear, tomados del .env
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    ports:
+      - "5432:5432"         # Conecta el puerto 5432 de tu computadora con el de PostgreSQL en el contenedor
+    volumes:
+      - ./db:/docker-entrypoint-initdb.d:ro   # El contenedor ve tu carpeta db/ en esta ruta, de donde toma los archivos a ejecutar
+      - ./tests.sql:/tests.sql:ro             # El contenedor ve tu tests.sql, para poder ejecutarlo con psql
+      - datos:/var/lib/postgresql             # Volumen: guarda los datos fuera del contenedor, aunque este se elimine
+
+volumes:
+  datos:
