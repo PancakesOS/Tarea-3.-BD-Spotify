@@ -1,0 +1,3 @@
+# minuto hora día-del-mes mes día-de-la-semana  comando
+# Cada 5 minutos (en los minutos 0, 5, 10... de cada hora) cuenta lo nuevo del crudo.
+*/5 * * * * /app/.venv/bin/python /app/ingestion/processor.py
