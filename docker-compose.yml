@@ -12,5 +12,75 @@ services:
       - ./tests.sql:/tests.sql:ro             # El contenedor ve tu tests.sql, para poder ejecutarlo con psql
       - datos:/var/lib/postgresql             # Volumen: guarda los datos fuera del contenedor, aunque este se elimine
 
-volumes:
-  datos:
+  kafka:                    # El broker de Kafka. No tiene ports: solo lo usan otros contenedores
+    image: apache/kafka:4.1.0                                   # Imagen oficial de Kafka 4.1
+    environment:            # Configuración de un broker que trabaja solo, en modo KRaft. Se copia tal cual
+      KAFKA_NODE_ID: 1                                          # Identificador de este broker
+      KAFKA_PROCESS_ROLES: broker,controller                    # Guarda los mensajes (broker) y se coordina a sí mismo (controller)
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093     # Puertos: 9092 para los programas y 9093 para coordinarse
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092        # La dirección que Kafka les da a los programas: el nombre del servicio
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER               # Cuál de los dos puertos es el de coordinación
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT  # Los dos puertos, sin cifrado ni contraseña
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093          # Quién coordina: este mismo broker
+      KAFKA_NUM_PARTITIONS: 1                                   # Los tópicos nuevos se crean con una partición
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1                 # Una copia del tópico interno de offsets: solo hay un broker
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1         # Una copia del tópico interno de transacciones
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1                    # Basta una copia al día para escribir en él
+      KAFKA_SHARE_COORDINATOR_STATE_TOPIC_REPLICATION_FACTOR: 1 # Una copia del tópico interno de share groups
+      KAFKA_SHARE_COORDINATOR_STATE_TOPIC_MIN_ISR: 1            # Basta una copia al día para escribir en él
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0                 # El consumer empieza a leer sin esperar 3 segundos
+
+  producer:                 # La app simulada: publica las reproducciones en Kafka
+    build: .                # Construye la imagen con el Dockerfile de esta carpeta
+    command: ["/app/.venv/bin/python", "app_simulator/producer.py"]  # El programa que ejecuta este contenedor
+    environment:            # Las variables que el programa lee con os.environ
+      POSTGRES_HOST: postgres                  # PostgreSQL, por el nombre de su servicio (lee los IDs de canciones y suscriptores)
+      POSTGRES_USER: ${POSTGRES_USER}          # Las credenciales salen del .env
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092      # Kafka: el nombre de su servicio y su puerto
+      KAFKA_TOPIC: ${KAFKA_TOPIC}              # El tópico en el que publica
+      INTERVAL_SECONDS: ${INTERVAL_SECONDS}    # Cada cuántos segundos publica una reproducción
+      SKIP_RATE: ${SKIP_RATE}                  # Proporción de skips (ms_played < 30000)
+      DUPLICATE_RATE: ${DUPLICATE_RATE}        # Proporción de mensajes que se vuelven a enviar
+      MAX_DUPLICATE_DELAY_SECONDS: ${MAX_DUPLICATE_DELAY_SECONDS}  # Retraso máximo de un duplicado (<= 300)
+      MAX_PLAY_AGE_DAYS: ${MAX_PLAY_AGE_DAYS}  # Cuántos días hacia atrás puede caer played_at
+    volumes:
+      - logs:/app/logs      # Donde escribe su log
+      - sent:/app/sent      # Donde escribe sent.log: los mensajes originales enviados, la referencia de verify.py
+    depends_on: [postgres, kafka]  # Se inicia después de postgres y kafka, pero no espera a que estén listos
+    restart: on-failure     # Si termina con error, Docker lo vuelve a iniciar
+
+  consumer:                 # Lee los mensajes de Kafka y los guarda en el crudo
+    build: .                # La misma imagen que el producer
+    command: ["/app/.venv/bin/python", "ingestion/consumer.py"]  # El programa que ejecuta este contenedor
+    environment:            # Las variables que el programa lee con os.environ
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092      # Kafka: el nombre de su servicio y su puerto
+      KAFKA_TOPIC: ${KAFKA_TOPIC}              # El tópico que lee
+    volumes:
+      - crudo:/app/data     # Donde escribe el crudo; el processor ve el mismo volumen
+      - logs:/app/logs      # Donde escribe su log
+    depends_on: [kafka]     # Se inicia después de kafka
+    restart: on-failure     # Si termina con error, Docker lo vuelve a iniciar
+
+  processor:                # cron ejecuta aquí el processor según el horario de ingestion/crontab
+    build: .                # La misma imagen que el producer y el consumer
+    # Copia las variables de entorno a /etc/environment, para que cron las vea, e inicia cron
+    command: ["sh", "-c", "printenv | grep -E '^(POSTGRES|KAFKA)_' > /etc/environment && cron -f"]
+    environment:            # Las variables que el programa lee con os.environ
+      KAFKA_TOPIC: ${KAFKA_TOPIC}              # Qué archivo del crudo cuenta
+      POSTGRES_HOST: postgres                  # PostgreSQL, donde actualiza los conteos
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - crudo:/app/data     # El mismo crudo que escribe el consumer (y el estado del processor)
+      - logs:/app/logs      # Donde escribe su log
+      - sent:/app/sent:ro   # Solo lectura: verify.py se ejecuta aquí y compara contra sent.log
+    depends_on: [postgres]  # Se inicia después de postgres
+
+volumes:                    # Volúmenes con nombre: Docker los conserva hasta docker compose down -v
+  datos:                    # Los datos de PostgreSQL
+  crudo:                    # El crudo y el estado del processor
+  logs:                     # Los logs de los tres programas
+  sent:                     # sent.log del simulador

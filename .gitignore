@@ -1,10 +1,15 @@
 # Credenciales locales: nunca se suben
 .env
 
+# Entorno virtual de uv (cada quien lo crea con uv sync; la imagen crea el suyo)
+.venv/
+__pycache__/
+
 # Material de apoyo local (no forma parte del repositorio)
 CLAUDE.md
 PROMPT_INICIAL.md
 contexto/
+Tarea_4_Reproducciones_Kafka.pdf
 
 # Archivos del sistema / editor
 .DS_Store

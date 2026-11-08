@@ -1,0 +1,9 @@
+[project]
+name = "spotify-data-platform"
+version = "0.2.0"
+description = "Plataforma de datos de Spotify: BD transaccional e ingesta de reproducciones con Kafka"
+requires-python = ">=3.13"
+dependencies = [
+    "confluent-kafka>=2.16.1",
+    "psycopg[binary]>=3.3.8",
+]
