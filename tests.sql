@@ -5,17 +5,24 @@
 --   docker compose exec postgres psql -U admin -d spotify -f /tests.sql
 --
 -- Secciones:
---   a) Las 5 preguntas de Laura.
+--   a) Las preguntas de Laura: las 5 originales (la 5 ya se puede
+--      responder con los conteos de reproducciones) y sus dos pedidos
+--      nuevos: el top 100 semanal (6) y las 20 más escuchadas de un
+--      suscriptor (7).
 --   b) Intentos de romper las reglas: cada uno DEBE terminar en ERROR.
 --   c) Registro y eliminación de un suscriptor con transacciones
---      todo o nada (caso exitoso, caso fallido y verificación).
+--      todo o nada (caso exitoso, caso fallido y verificación), y si la
+--      eliminación cambia el top semanal.
 --
 -- No se activa ON_ERROR_STOP: fuera de una transacción, un error solo
 -- cancela esa instrucción y psql sigue con la siguiente.
 --
--- El archivo se puede ejecutar varias veces con la misma salida: lo que
--- se modifica con éxito (la suscriptora 5, Sofía) se borra al final, y
--- la base termina exactamente como la dejó db/02_seed.sql.
+-- El archivo se puede ejecutar varias veces: lo que se modifica con
+-- éxito (la suscriptora 5, Sofía) se borra al final, y las 14 tablas del
+-- catálogo terminan exactamente como las dejó db/02_seed.sql. Lo único
+-- que cambia entre una ejecución y otra son los números de las
+-- preguntas 5, 6 y 7, porque el processor sigue sumando reproducciones
+-- cada 5 minutos y la «última semana completa» depende de la fecha.
 -- =====================================================================
 
 
@@ -106,35 +113,72 @@ ORDER BY sb.subscriber_id, guardado.tipo <> 'canción', guardado.titulo;
 
 -- ---------------------------------------------------------------------
 -- Pregunta 5: ¿Cuál es la canción más escuchada?
--- NO SE PUEDE RESPONDER con esta base: no guarda reproducciones. Solo
--- sabemos en qué playlists y bibliotecas está cada canción, y eso no
--- dice cuántas veces se escuchó.
---
--- Haría falta una tabla de reproducciones, por ejemplo:
---
---   CREATE TABLE plays (
---       play_id       bigint    PRIMARY KEY,
---       subscriber_id integer   NOT NULL REFERENCES subscribers (subscriber_id),
---       song_id       integer   NOT NULL REFERENCES songs (song_id),
---       played_at     timestamp NOT NULL
---   );
---
--- y con ella la consulta sería:
---
---   SELECT s.song_id, s.title, COUNT(*) AS reproducciones
---   FROM plays p
---   JOIN songs s ON s.song_id = p.song_id
---   GROUP BY s.song_id, s.title
---   ORDER BY reproducciones DESC
---   LIMIT 1;
---
--- No se ejecuta nada aquí porque la tabla plays no existe.
+-- En la Tarea 3 no se podía responder porque la base no guardaba
+-- reproducciones. Ahora sí: subscriber_song_play tiene, por suscriptor y
+-- canción, las reproducciones válidas de siempre; sumándolas por canción
+-- se obtiene el total de cada una (song_daily_play da el mismo total).
+-- WITH TIES: si dos canciones empatan en el primer lugar, salen las dos.
+-- Esperado: una fila (o más, si hay empate) con la canción de más
+-- reproducciones; el número crece con cada corrida del processor.
 -- ---------------------------------------------------------------------
 \echo
-\echo '=== Pregunta 5: ¿cuál es la canción más escuchada? ==='
-\echo 'No se puede responder: la base no guarda reproducciones.'
-\echo 'Haría falta una tabla plays(play_id, subscriber_id, song_id, played_at);'
-\echo 'la tabla propuesta y la consulta de ejemplo están comentadas en tests.sql.'
+\echo '=== Pregunta 5: ¿cuál es la canción más escuchada? (desde siempre) ==='
+SELECT s.song_id,
+       s.title          AS cancion,
+       sum(p.num_rep)   AS reproducciones
+FROM subscriber_song_play p
+JOIN songs s ON s.song_id = p.song_id
+GROUP BY s.song_id, s.title
+ORDER BY reproducciones DESC
+FETCH FIRST 1 ROWS WITH TIES;
+
+-- ---------------------------------------------------------------------
+-- Pregunta 6: top 100 semanal (regla 4).
+-- Las 100 canciones con más reproducciones de la ÚLTIMA SEMANA COMPLETA,
+-- de lunes a domingo, en UTC (regla 3); la semana en curso no cuenta.
+-- date_trunc('week', ...) regresa el lunes de la semana actual a las
+-- 00:00; la semana anterior va de ese lunes - 7 días (incluido) a ese
+-- lunes (excluido). now() AT TIME ZONE 'UTC' fija la fecha en UTC sin
+-- importar la zona horaria de la sesión.
+-- Empates: se desempata por song_id para que el orden sea siempre el
+-- mismo.
+-- Esperado: a lo más 8 filas, porque el catálogo tiene 8 canciones.
+-- ---------------------------------------------------------------------
+\echo
+\echo '=== Pregunta 6: top 100 semanal (última semana completa, lunes a domingo, UTC) ==='
+SELECT (date_trunc('week', now() AT TIME ZONE 'UTC'))::date - 7 AS lunes,
+       (date_trunc('week', now() AT TIME ZONE 'UTC'))::date - 1 AS domingo;
+
+SELECT row_number() OVER (ORDER BY sum(d.num_rep) DESC, d.song_id) AS lugar,
+       d.song_id,
+       s.title          AS cancion,
+       sum(d.num_rep)   AS reproducciones
+FROM song_daily_play d
+JOIN songs s ON s.song_id = d.song_id
+WHERE d.play_date >= (date_trunc('week', now() AT TIME ZONE 'UTC'))::date - 7
+  AND d.play_date <  (date_trunc('week', now() AT TIME ZONE 'UTC'))::date
+GROUP BY d.song_id, s.title
+ORDER BY lugar
+LIMIT 100;
+
+-- ---------------------------------------------------------------------
+-- Pregunta 7: las 20 canciones más escuchadas de un suscriptor (regla 5).
+-- Desde siempre, así que basta leer subscriber_song_play; la PK
+-- (subscriber_id, song_id) sirve de índice para filtrar al suscriptor.
+-- Se muestra a ana (suscriptora 1); desempate por song_id.
+-- Esperado: a lo más 8 filas (8 canciones en el catálogo).
+-- ---------------------------------------------------------------------
+\echo
+\echo '=== Pregunta 7: las 20 canciones más escuchadas de ana (suscriptora 1) ==='
+SELECT row_number() OVER (ORDER BY p.num_rep DESC, p.song_id) AS lugar,
+       p.song_id,
+       s.title     AS cancion,
+       p.num_rep   AS reproducciones
+FROM subscriber_song_play p
+JOIN songs s ON s.song_id = p.song_id
+WHERE p.subscriber_id = 1
+ORDER BY lugar
+LIMIT 20;
 
 
 \echo
@@ -304,6 +348,26 @@ VALUES (299, 'Álbum del futuro', 2500, 'futuro.jpg', 'A11');
 UPDATE playlist_song SET position = 0 WHERE playlist_id = 10 AND song_id = 101;
 
 -- ---------------------------------------------------------------------
+-- FOREIGN KEY (tablas de conteos): solo se cuentan canciones que existen
+-- en el catálogo. No hay canción 999.
+-- ---------------------------------------------------------------------
+\echo
+\echo '--- FOREIGN KEY: conteo diario de una canción que no existe (999) ---'
+INSERT INTO song_daily_play (song_id, play_date, num_rep)
+VALUES (999, '2026-11-02', 5);
+
+-- ---------------------------------------------------------------------
+-- CHECK (tablas de conteos): una fila de conteo existe solo si hubo al
+-- menos una reproducción válida. PostgreSQL revisa el CHECK antes que la
+-- PK y las FK, así que el error es el del CHECK aunque marta ya tenga
+-- una fila para la canción 101.
+-- ---------------------------------------------------------------------
+\echo
+\echo '--- CHECK: conteo de 0 reproducciones en subscriber_song_play ---'
+INSERT INTO subscriber_song_play (subscriber_id, song_id, num_rep)
+VALUES (3, 101, 0);
+
+-- ---------------------------------------------------------------------
 -- Verificación: ninguno de los intentos anteriores dejó cambios.
 -- Deben verse los mismos conteos que dejó 02_seed.sql.
 -- ---------------------------------------------------------------------
@@ -382,9 +446,13 @@ WHERE sb.subscriber_id = 5;
 -- ---------------------------------------------------------------------
 -- c.3 Preparación: Sofía crea la playlist 15 con dos canciones y guarda
 -- una canción y un álbum, para que su eliminación tenga qué borrar.
+-- También se le cargan conteos en subscriber_song_play: el simulador
+-- leyó los suscriptores al iniciar y no conoce a Sofía, así que no tiene
+-- reproducciones reales. Solo se cargan en subscriber_song_play (no en
+-- song_daily_play) para que al borrarla las dos tablas vuelvan a cuadrar.
 -- ---------------------------------------------------------------------
 \echo
-\echo '=== c.3 Preparación: playlist 15 y biblioteca de Sofía ==='
+\echo '=== c.3 Preparación: playlist 15, biblioteca y reproducciones de Sofía ==='
 INSERT INTO playlists (playlist_id, name, created_at, subscriber_id)
 VALUES (15, 'Para correr', '2026-11-02', 5);
 INSERT INTO playlist_song (playlist_id, song_id, position, added_at) VALUES
@@ -392,28 +460,34 @@ INSERT INTO playlist_song (playlist_id, song_id, position, added_at) VALUES
     (15, 106, 2, '2026-11-02');
 INSERT INTO library_song (library_id, song_id)   VALUES (5, 107);
 INSERT INTO library_album (library_id, album_id) VALUES (5, 203);
+INSERT INTO subscriber_song_play (subscriber_id, song_id, num_rep) VALUES
+    (5, 105, 3),
+    (5, 106, 1);
 
 -- =====================================================================
 -- ELIMINACIÓN: borra al suscriptor y todo lo que depende de él, sin
 -- ON DELETE CASCADE: cada DELETE es explícito y va en orden de
 -- dependencias (primero las filas que apuntan a otras):
---   library_song, library_album, playlist_song, playlists, libraries,
---   profiles, subscribers.
+--   subscriber_song_play, library_song, library_album, playlist_song,
+--   playlists, libraries, profiles, subscribers.
 -- Solo se borran filas del suscriptor; ninguna canción, álbum ni
--- artista del catálogo.
+-- artista del catálogo, ni los conteos diarios por canción
+-- (song_daily_play no sabe quién escuchó; ver c.6).
 -- =====================================================================
 
 -- ---------------------------------------------------------------------
 -- c.4 Eliminación fallida (ana, suscriptora 1): se borran sus
--- canciones y álbumes guardados y sus playlists, pero se intenta borrar
--- al suscriptor ANTES que su biblioteca y su perfil. La FK lo rechaza y
--- ROLLBACK deshace también lo que ya se había borrado.
+-- reproducciones, sus canciones y álbumes guardados y sus playlists,
+-- pero se intenta borrar al suscriptor ANTES que su biblioteca y su
+-- perfil. La FK lo rechaza y ROLLBACK deshace también lo que ya se había
+-- borrado.
 -- ---------------------------------------------------------------------
 \echo
 \echo '=== c.4 Eliminación fallida de ana (se borra subscribers antes que libraries y profiles) ==='
 \echo '--- Filas de ana ANTES ---'
 SELECT t.tabla, t.filas
 FROM (VALUES
+    (0, 'subscriber_song_play', (SELECT count(*) FROM subscriber_song_play WHERE subscriber_id = 1)),
     (1, 'library_song',  (SELECT count(*) FROM library_song  WHERE library_id  IN (SELECT library_id  FROM libraries WHERE subscriber_id = 1))),
     (2, 'library_album', (SELECT count(*) FROM library_album WHERE library_id  IN (SELECT library_id  FROM libraries WHERE subscriber_id = 1))),
     (3, 'playlist_song', (SELECT count(*) FROM playlist_song WHERE playlist_id IN (SELECT playlist_id FROM playlists WHERE subscriber_id = 1))),
@@ -425,6 +499,7 @@ FROM (VALUES
 ORDER BY t.orden;
 
 BEGIN;
+DELETE FROM subscriber_song_play WHERE subscriber_id = 1;
 DELETE FROM library_song  WHERE library_id  IN (SELECT library_id  FROM libraries WHERE subscriber_id = 1);
 DELETE FROM library_album WHERE library_id  IN (SELECT library_id  FROM libraries WHERE subscriber_id = 1);
 DELETE FROM playlist_song WHERE playlist_id IN (SELECT playlist_id FROM playlists WHERE subscriber_id = 1);
@@ -436,7 +511,8 @@ ROLLBACK;
 \echo '--- Filas de ana DESPUÉS (deben ser idénticas a ANTES) ---'
 SELECT t.tabla, t.filas
 FROM (VALUES
-    (1, 'library_song',  (SELECT count(*) FROM library_song  WHERE library_id  IN (SELECT library_id  FROM libraries WHERE subscriber_id = 1))),
+    (0, 'subscriber_song_play', (SELECT count(*) FROM subscriber_song_play WHERE subscriber_id = 1)),
+    (1, 'library_song', (SELECT count(*) FROM library_song  WHERE library_id  IN (SELECT library_id  FROM libraries WHERE subscriber_id = 1))),
     (2, 'library_album', (SELECT count(*) FROM library_album WHERE library_id  IN (SELECT library_id  FROM libraries WHERE subscriber_id = 1))),
     (3, 'playlist_song', (SELECT count(*) FROM playlist_song WHERE playlist_id IN (SELECT playlist_id FROM playlists WHERE subscriber_id = 1))),
     (4, 'playlists',     (SELECT count(*) FROM playlists     WHERE subscriber_id = 1)),
@@ -447,13 +523,15 @@ FROM (VALUES
 ORDER BY t.orden;
 
 -- ---------------------------------------------------------------------
--- c.5 Eliminación exitosa (Sofía, suscriptora 5): los siete DELETE en
--- orden de dependencias. Al terminar, la base queda igual que después
--- de 02_seed.sql, y por eso tests.sql se puede volver a ejecutar.
+-- c.5 Eliminación exitosa (Sofía, suscriptora 5): los ocho DELETE en
+-- orden de dependencias, empezando por sus reproducciones. Al terminar,
+-- el catálogo queda igual que después de 02_seed.sql, y por eso
+-- tests.sql se puede volver a ejecutar.
 -- ---------------------------------------------------------------------
 \echo
-\echo '=== c.5 Eliminación exitosa de Sofía (siete DELETE en orden) ==='
+\echo '=== c.5 Eliminación exitosa de Sofía (ocho DELETE en orden) ==='
 BEGIN;
+DELETE FROM subscriber_song_play WHERE subscriber_id = 5;
 DELETE FROM library_song  WHERE library_id  IN (SELECT library_id  FROM libraries WHERE subscriber_id = 5);
 DELETE FROM library_album WHERE library_id  IN (SELECT library_id  FROM libraries WHERE subscriber_id = 5);
 DELETE FROM playlist_song WHERE playlist_id IN (SELECT playlist_id FROM playlists WHERE subscriber_id = 5);
@@ -464,7 +542,8 @@ DELETE FROM subscribers   WHERE subscriber_id = 5;
 COMMIT;
 
 \echo '--- Verificación: no queda nada de Sofía (todo en 0) ---'
-SELECT (SELECT count(*) FROM subscribers   WHERE subscriber_id = 5) AS subscribers,
+SELECT (SELECT count(*) FROM subscriber_song_play WHERE subscriber_id = 5) AS subscriber_song_play,
+       (SELECT count(*) FROM subscribers   WHERE subscriber_id = 5) AS subscribers,
        (SELECT count(*) FROM profiles      WHERE subscriber_id = 5) AS profiles,
        (SELECT count(*) FROM libraries     WHERE library_id    = 5) AS libraries,
        (SELECT count(*) FROM library_song  WHERE library_id    = 5) AS library_song,
@@ -477,6 +556,66 @@ SELECT (SELECT count(*) FROM songs)   AS songs,
        (SELECT count(*) FROM albums)  AS albums,
        (SELECT count(*) FROM artists) AS artists;
 
+-- ---------------------------------------------------------------------
+-- c.6 ¿Cambia el top semanal cuando se elimina a un suscriptor?
+--
+-- NO. El top semanal se calcula con song_daily_play, que guarda cuántas
+-- reproducciones válidas tuvo cada canción cada día, pero no quién las
+-- hizo: es un agregado anónimo. Al eliminar a un suscriptor se borran
+-- sus datos personales y su historial (subscriber_song_play), pero sus
+-- reproducciones sí ocurrieron y siguen contando en el ranking de la
+-- canción; tampoco sería posible restarlas, porque song_daily_play no
+-- sabe cuáles fueron suyas. Lo que sí cambia: sus «20 más escuchadas»
+-- desaparecen, y los mensajes suyos que todavía lleguen por Kafka se
+-- descartan (el processor no cuenta suscriptores que no existen).
+--
+-- Consecuencia: después de eliminar a un suscriptor con reproducciones,
+-- la suma de subscriber_song_play queda por debajo de la de
+-- song_daily_play (verify.py supone que no se eliminó a nadie).
+--
+-- Para mostrarlo con un suscriptor que sí tiene reproducciones, se
+-- elimina a ana con los ocho DELETE dentro de una transacción, se compara
+-- el top semanal antes y después y se hace ROLLBACK: ana no se pierde.
+-- ---------------------------------------------------------------------
+\echo
+\echo '=== c.6 ¿Cambia el top semanal al eliminar a un suscriptor? (ana, con ROLLBACK) ==='
+BEGIN;
+-- El top semanal de la pregunta 6, como vista temporal: el ROLLBACK la borra.
+CREATE TEMP VIEW top_semanal AS
+SELECT d.song_id, sum(d.num_rep) AS reproducciones
+FROM song_daily_play d
+WHERE d.play_date >= (date_trunc('week', now() AT TIME ZONE 'UTC'))::date - 7
+  AND d.play_date <  (date_trunc('week', now() AT TIME ZONE 'UTC'))::date
+GROUP BY d.song_id
+ORDER BY reproducciones DESC, d.song_id
+LIMIT 100;
+CREATE TEMP TABLE top_antes AS SELECT * FROM top_semanal;
+CREATE TEMP TABLE ana_antes AS
+SELECT count(*) AS filas FROM subscriber_song_play WHERE subscriber_id = 1;
+
+DELETE FROM subscriber_song_play WHERE subscriber_id = 1;
+DELETE FROM library_song  WHERE library_id  IN (SELECT library_id  FROM libraries WHERE subscriber_id = 1);
+DELETE FROM library_album WHERE library_id  IN (SELECT library_id  FROM libraries WHERE subscriber_id = 1);
+DELETE FROM playlist_song WHERE playlist_id IN (SELECT playlist_id FROM playlists WHERE subscriber_id = 1);
+DELETE FROM playlists     WHERE subscriber_id = 1;
+DELETE FROM libraries     WHERE subscriber_id = 1;
+DELETE FROM profiles      WHERE subscriber_id = 1;
+DELETE FROM subscribers   WHERE subscriber_id = 1;
+
+\echo '--- Dentro de la transacción: ana ya no existe, el top semanal no cambió (diferencias = 0) ---'
+SELECT (SELECT count(*) FROM subscribers WHERE subscriber_id = 1)          AS ana_existe,
+       (SELECT filas FROM ana_antes)                                       AS filas_ana_antes,
+       (SELECT count(*) FROM subscriber_song_play WHERE subscriber_id = 1) AS filas_ana_despues,
+       (SELECT count(*) FROM top_antes)                                    AS canciones_en_el_top,
+       (SELECT count(*) FROM ((TABLE top_antes EXCEPT TABLE top_semanal)
+                              UNION ALL
+                              (TABLE top_semanal EXCEPT TABLE top_antes)) AS x) AS diferencias;
+ROLLBACK;
+
+\echo '--- Después del ROLLBACK: ana sigue registrada con sus reproducciones ---'
+SELECT (SELECT count(*) FROM subscribers WHERE subscriber_id = 1)               AS ana_existe,
+       (SELECT count(*) > 0 FROM subscriber_song_play WHERE subscriber_id = 1)  AS tiene_reproducciones;
+
 
 \echo
 \echo '#####################################################################'
@@ -484,8 +623,10 @@ SELECT (SELECT count(*) FROM songs)   AS songs,
 \echo '#####################################################################'
 
 -- ---------------------------------------------------------------------
--- Conteo de las 14 tablas. Debe coincidir con los conteos del seed:
--- 5, 4, 4, 4, 4, 5, 8, 11, 6, 10, 12, 8, 5, 3.
+-- Conteo de las 14 tablas del catálogo. Debe coincidir con los conteos
+-- del seed: 5, 4, 4, 4, 4, 5, 8, 11, 6, 10, 12, 8, 5, 3.
+-- Las dos tablas de conteos no se listan: el processor las sigue
+-- actualizando cada 5 minutos.
 -- ---------------------------------------------------------------------
 SELECT t.tabla, t.filas
 FROM (VALUES
